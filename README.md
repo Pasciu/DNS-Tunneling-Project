@@ -13,7 +13,6 @@
    ▼
 [Authoritative server 10.10.0.10]     ← attacker-controlled
    │  Reconstructs payload from chunks
-   │  Returns commands via TXT records
    ▼
   [logs/server_events.jsonl]
 ```
@@ -43,12 +42,6 @@ docker exec -it dns_client python metrics.py
 
 # Check what the server received
 docker exec dns_authoritative cat /logs/server_events.jsonl
-
-# Queue a C2 command (from server side – needs exec)
-# The client will receive it on next cmd.s1.tunnel.lab poll
-docker exec dns_authoritative python - <<'EOF'
-from server import TunnelResolver  # won't work directly; see note below
-EOF
 ```
 
 ## Realistic DNS configuration (Slide 9 note)

