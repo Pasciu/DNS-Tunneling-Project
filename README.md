@@ -47,8 +47,9 @@ docker exec dns_authoritative cat /logs/received.txt
 # 4. Run all measurements (bandwidth + robustness)
 docker exec -it dns_client python client.py --measure
 
-# 5. Detectability analysis only (no network needed)
+# 5. Detectability analysis on the real input file (no network needed)
 docker exec -it dns_client python metrics.py
+# (Or on host / with custom path: python client/metrics.py --file data/input.txt)
 ```
 
 ## Realistic DNS configuration (Slide 9 note)

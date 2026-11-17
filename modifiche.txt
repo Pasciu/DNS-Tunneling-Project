@@ -1,2 +1,0 @@
-- Aggiustare query-rate rule
-- Verificare script di measure che sia sensato

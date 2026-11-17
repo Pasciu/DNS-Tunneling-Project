@@ -19,6 +19,7 @@ Or import:
 
 import base64
 import math
+import os
 import statistics
 from collections import Counter
 from dataclasses import dataclass
@@ -60,13 +61,36 @@ NORMAL_LABELS = [
     "gateway", "intranet", "ldap", "sso", "admin",
 ]
 
-TUNNEL_MESSAGES = [
-    "username=admin&password=Pa$$w0rd123",
-    "hostname=workstation-7&os=Windows11",
-    "2024-01-15T14:32:01 – exfiltration started",
-    "file=/etc/shadow size=2048",
-]
+def get_input_file_path(custom_path: str = None) -> str:
+    if custom_path and os.path.isfile(custom_path):
+        return custom_path
+    candidate_paths = [
+        "/data/input.txt",
+        os.path.join(os.path.dirname(__file__), "..", "data", "input.txt"),
+        os.path.join(os.path.dirname(__file__), "data", "input.txt"),
+        "data/input.txt",
+    ]
+    for p in candidate_paths:
+        if os.path.isfile(p):
+            return p
+    return "/data/input.txt"
 
+
+def load_tunnel_messages(file_path: str = None) -> List[str]:
+    path = get_input_file_path(file_path)
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return [content]
+    # Fallback if file doesn't exist
+    return [
+        "Progetto Cyber Security - Foundations of Cybersecurity\n"
+        "Simulazione di DNS Tunneling: trasmissione di file testuale."
+    ]
+
+
+INPUT_FILE_PATH = get_input_file_path()
+TUNNEL_MESSAGES = load_tunnel_messages(INPUT_FILE_PATH)
 TUNNEL_LABELS = _make_tunnel_labels(TUNNEL_MESSAGES)
 
 
@@ -110,13 +134,21 @@ def analyze_labels(labels: List[str], title: str = ""):
     return s
 
 
-def compare_traffic():
+def compare_traffic(file_path: str = None):
     print("\n" + "=" * 55)
     print("METRIC 3 – DETECTABILITY")
     print("=" * 55)
 
+    if file_path:
+        messages = load_tunnel_messages(file_path)
+        labels = _make_tunnel_labels(messages)
+        source_desc = f"from {file_path}"
+    else:
+        labels = TUNNEL_LABELS
+        source_desc = f"from {INPUT_FILE_PATH}"
+
     n_stats = analyze_labels(NORMAL_LABELS, "NORMAL DNS labels")
-    t_stats = analyze_labels(TUNNEL_LABELS, "TUNNEL DNS labels  (Base32-encoded)")
+    t_stats = analyze_labels(labels, f"TUNNEL DNS labels  ({source_desc}, Base32-encoded)")
 
     # Entropy ratio as a simple classifier score
     ratio = t_stats.entropy_mean / n_stats.entropy_mean if n_stats.entropy_mean else 0
@@ -136,4 +168,8 @@ def compare_traffic():
 
 
 if __name__ == "__main__":
-    compare_traffic()
+    import argparse
+    parser = argparse.ArgumentParser(description="DNS Tunnel - Detectability Metric")
+    parser.add_argument("--file", metavar="PATH", default=None, help="Path to text file (default: data/input.txt)")
+    args = parser.parse_args()
+    compare_traffic(file_path=args.file)

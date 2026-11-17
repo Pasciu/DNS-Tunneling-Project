@@ -13,6 +13,7 @@ ordered Base32 chunks.
 """
 
 import base64
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 
 TUNNEL_DOMAIN = "tunnel.lab"
 LOG_PATH = "/logs/server_events.jsonl"
+RECEIVED_PATH = "/logs/received.txt"
 
 
 class TunnelResolver(BaseResolver):
@@ -57,8 +59,18 @@ class TunnelResolver(BaseResolver):
             "bytes_received": 0,
             "start_time": time.time(),
         }
+        self._last_session_id: str | None = None
+        self._last_event_time: float = 0.0
+        self._bench_active: bool = False
+
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        self._logfile = open(LOG_PATH, "a")
+        self._logfile = open(LOG_PATH, "w")
+
+    def _reset_logfile(self):
+        """Truncate and reopen server_events.jsonl for a fresh execution."""
+        if not self._logfile.closed:
+            self._logfile.close()
+        self._logfile = open(LOG_PATH, "w")
 
     # ── Core DNS handler ──────────────────────────────────────
 
@@ -99,16 +111,55 @@ class TunnelResolver(BaseResolver):
 
             seq = int(seq_str)
 
+            now = time.time()
             with self._lock:
-                # If a new transmission starts (seq 0) and this session was completed or already had seq 0, reset buffer
-                if seq == 0 and (session_id in self._completed_sessions or 0 in self._sessions[session_id]):
-                    self._sessions[session_id].clear()
-                    self._completed_sessions.discard(session_id)
+                if session_id == "bench_bw":
+                    # Start of bandwidth benchmark
+                    # Reset logfile only if this is a brand new benchmark run
+                    if not self._bench_active or self._last_session_id == "bench_rob":
+                        is_demo_continuation = (
+                            self._last_session_id == "s1" and (now - self._last_event_time) < 3.0
+                        )
+                        if not is_demo_continuation:
+                            self._reset_logfile()
+                        self._bench_active = True
+
+                    # For each run within bench_bw, reset in-memory chunk buffer when seq == 0
+                    if seq == 0:
+                        self._sessions[session_id].clear()
+                        self._completed_sessions.discard(session_id)
+
+                elif session_id == "bench_rob":
+                    # Robustness benchmark follows bench_bw in --measure / --demo
+                    # Do not reset logfile if continuing the active benchmark
+                    if not self._bench_active:
+                        self._reset_logfile()
+                        self._bench_active = True
+
+                    if seq == 0:
+                        self._sessions[session_id].clear()
+                        self._completed_sessions.discard(session_id)
+
+                else:
+                    # Normal exfiltration session (e.g. "s1")
+                    self._bench_active = False
+                    if seq == 0:
+                        is_new_run = (
+                            session_id in self._completed_sessions
+                            or self._last_session_id != session_id
+                            or (now - self._last_event_time) > 3.0
+                        )
+                        if is_new_run:
+                            self._reset_logfile()
+                            self._sessions[session_id].clear()
+                            self._completed_sessions.discard(session_id)
 
                 self._sessions[session_id][seq] = chunk
                 if total is not None:
                     self._session_totals[session_id] = total
                 self._stats["queries_tunnel"] += 1
+                self._last_session_id = session_id
+                self._last_event_time = now
 
             event_data = {"type": "data", "session": session_id, "seq": seq, "chunk": chunk}
             if total is not None:
@@ -149,7 +200,8 @@ class TunnelResolver(BaseResolver):
         try:
             decoded_bytes = base64.b32decode(joined + "=" * pad)
             decoded_text = decoded_bytes.decode("utf-8", errors="replace")
-            output_file = "/logs/received.txt"
+            output_file = RECEIVED_PATH
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(decoded_text)
 
@@ -189,9 +241,12 @@ class TunnelResolver(BaseResolver):
         )
 
     def _log_event(self, event: dict):
-        event["ts"] = time.time()
-        self._logfile.write(json.dumps(event) + "\n")
-        self._logfile.flush()
+        now = time.time()
+        event["ts"] = now
+        event["ts_iso"] = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()
+        with self._lock:
+            self._logfile.write(json.dumps(event) + "\n")
+            self._logfile.flush()
 
 
 # ── Entry point ───────────────────────────────────────────────
@@ -215,4 +270,7 @@ if __name__ == "__main__":
                     log.info(f"[DECODED PAYLOAD {sid}] {data.decode('utf-8', errors='replace')!r}")
     except KeyboardInterrupt:
         server.stop()
+        with resolver._lock:
+            if not resolver._logfile.closed:
+                resolver._logfile.close()
         log.info("Server stopped.")
