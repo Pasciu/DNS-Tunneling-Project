@@ -1,4 +1,2 @@
-- [x] Rimuovere C2 demo (completato)
 - Aggiustare query-rate rule
-- Decript messaggio originale e input/output file testuale
 - Verificare script di measure che sia sensato

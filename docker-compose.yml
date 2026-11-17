@@ -55,6 +55,8 @@ services:
         ipv4_address: 10.10.0.100
     dns:
       - 10.10.0.2        # all DNS goes through the resolver
+    volumes:
+      - ./data:/data
     depends_on:
       - resolver
       - authoritative
