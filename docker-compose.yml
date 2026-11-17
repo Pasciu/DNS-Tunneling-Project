@@ -1,0 +1,66 @@
+version: '3.8'
+
+# ─────────────────────────────────────────────────────────────
+#  DNS TUNNEL LAB  –  Foundations of Cybersecurity demo
+#
+#  Network topology:
+#    client (10.10.0.100)
+#      └─► resolver / Unbound (10.10.0.2)   [stub-zone → tunnel.lab]
+#            └─► authoritative server (10.10.0.10)  [attacker-controlled]
+#
+#  In a real attack the "stub-zone" is replaced by a legitimate
+#  NS record registered for attacker.com; the lab mirrors that
+#  delegation without touching the public internet.
+# ─────────────────────────────────────────────────────────────
+
+networks:
+  dns_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+
+services:
+
+  authoritative:
+    build: ./authoritative
+    container_name: dns_authoritative
+    networks:
+      dns_net:
+        ipv4_address: 10.10.0.10
+    # Expose on host port 10053 so you can inspect with dig from outside
+    ports:
+      - "10053:53/udp"
+    volumes:
+      - ./logs:/logs
+    restart: unless-stopped
+
+  resolver:
+    image: mvance/unbound:1.19.0
+    container_name: dns_resolver
+    networks:
+      dns_net:
+        ipv4_address: 10.10.0.2
+    volumes:
+      - ./resolver/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+    depends_on:
+      - authoritative
+    restart: unless-stopped
+
+  client:
+    build: ./client
+    container_name: dns_client
+    networks:
+      dns_net:
+        ipv4_address: 10.10.0.100
+    dns:
+      - 10.10.0.2        # all DNS goes through the resolver
+    depends_on:
+      - resolver
+      - authoritative
+    # NET_ADMIN lets us use tc-netem for robustness tests
+    cap_add:
+      - NET_ADMIN
+    tty: true
+    stdin_open: true
+    command: tail -f /dev/null   # keep alive; exec into it manually
